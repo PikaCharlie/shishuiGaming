@@ -10,6 +10,9 @@ app.get('/',function(req, res) {
     res.sendFile(__dirname + '../../public_html/blockland/v3/index.html');
 });
 
+// 添加物品状态管理
+const worldItems = new Map();
+
 io.sockets.on('connection', function(socket){
 	socket.userData = { 
         x:0, 
@@ -71,7 +74,46 @@ io.sockets.on('connection', function(socket){
             id: data.id,
             action: 'Dying'
         });
+
+        if (data.inventory) {
+            socket.broadcast.emit('playerDied', {
+                id: socket.id,
+                inventory: data.inventory
+            });
+        }
     });
+
+    // 在 socket.io 连接处理中添加
+    socket.on('itemSpawned', function(data) {
+        // 广播给其他玩家
+        socket.broadcast.emit('itemSpawned', data);
+    });
+
+    socket.on('itemPickup', function(data) {
+        // 广播物品被拾取
+        io.emit('itemPickedUp', {
+            itemId: data.itemId,
+            playerId: data.playerId
+        });
+        worldItems.delete(data.itemId);
+    });
+
+    socket.on('itemDrop', function(data) {
+        // 为丢弃的物品生成新ID
+        const itemId = `item_${Date.now()}_${Math.random()}`;
+        const itemData = {
+            id: itemId,
+            name: data.name,
+            position: data.position
+        };
+        
+        // 广播物品掉落
+        io.emit('itemDropped', itemData);
+        worldItems.set(data.id, itemData);
+    });
+
+    // 当玩家连接时，发送现有物品信息
+    socket.emit('initialItems', Array.from(worldItems.values()));
 });
 
 http.listen(2002,'0.0.0.0', function(){

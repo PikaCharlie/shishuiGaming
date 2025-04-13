@@ -117,6 +117,12 @@ class Game{
 				case 't':  
 					if(this.player) this.player.action = 'Northern Soul Floor Combo';
 					break;
+				case 'b':
+					this.toggleInventoryUI();
+					break;
+				case 's':
+					this.checkItemPickup();
+					break;
 			}
 		});
 
@@ -128,6 +134,10 @@ class Game{
 				}, 1000); // 1秒后回到待机状态
 			}
 		});
+
+		// 初始化物品系统
+		this.interactableItems = new Map();
+		this.createInventoryUI();
 
 	}
 	
@@ -232,6 +242,28 @@ class Game{
 		
 		this.player = new PlayerLocal(this);
 		
+		// 等待玩家模型加载完成
+		const waitForPlayer = setInterval(() => {
+			if (this.player.object) {
+				this.createCameras();
+				clearInterval(waitForPlayer);
+				
+				// 加载物品
+				const items = ['medkit', 'SCP-999'];
+				items.forEach(itemName => {
+					const angle = Math.random() * Math.PI * 2;
+					const distance = 50 + Math.random() * 50;
+					const position = new THREE.Vector3(
+						this.player.object.position.x + Math.cos(angle) * distance,
+						0,
+						this.player.object.position.z + Math.sin(angle) * distance
+					);
+
+					this.loadSingleItem(itemName, position);
+				});
+			}
+		}, 100);
+
 		this.loadEnvironment(loader);
 		
 		this.speechBubble = new SpeechBubble(this, "", 150);
@@ -401,6 +433,10 @@ class Game{
 	}
 	
 	createCameras(){
+		if (!this.player || !this.player.object) {
+			console.warn('Player not ready for camera setup');
+			return;
+		}
 		//摄像机高度
 		const offset = new THREE.Vector3(0, 80, 0);
 		const front = new THREE.Object3D();
@@ -631,6 +667,26 @@ class Game{
 			}
 		});
 
+		// 检查物品距离并高亮
+		if (this.player && this.interactableItems) {
+			const playerPos = this.player.object.position.clone();
+			this.interactableItems.forEach(item => {
+				const distance = playerPos.distanceTo(item.position);
+				item.traverse(child => {
+					if (child.isMesh && child.material) {
+						if (distance < 100) {
+							child.material.emissive.setHex(0x666666);
+							child.material.emissiveIntensity = 0.5;
+						} else {
+							child.material.emissive.setHex(0x000000);
+							child.material.emissiveIntensity = 0;
+						}
+						child.material.needsUpdate = true;
+					}
+				});
+			});
+		}
+
 		// 如果在观战模式，更新摄像机位置
 		if (this.spectatorTarget && !this.cameras.active) {
 			const targetPos = this.spectatorTarget.object.position;
@@ -723,6 +779,327 @@ class Game{
         document.body.appendChild(spectatorInfo);
     }
 }
+
+	// 创建背包 UI
+	createInventoryUI() {
+		this.inventoryUI = document.createElement('div');
+		this.inventoryUI.style.position = 'fixed';
+		this.inventoryUI.style.top = '50%';
+		this.inventoryUI.style.left = '50%';
+		this.inventoryUI.style.transform = 'translate(-50%, -50%)';
+		this.inventoryUI.style.width = '300px';
+		this.inventoryUI.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+		this.inventoryUI.style.padding = '20px';
+		this.inventoryUI.style.borderRadius = '10px';
+		this.inventoryUI.style.color = 'white';
+		this.inventoryUI.style.display = 'none';
+		this.inventoryUI.style.zIndex = '1000';
+		document.body.appendChild(this.inventoryUI);
+	}
+
+	// 切换背包显示
+	toggleInventoryUI() {
+		if (!this.player || this.player.isDead) return;
+		this.inventoryUI.style.display = this.inventoryUI.style.display === 'none' ? 'block' : 'none';
+		if (this.inventoryUI.style.display === 'block') {
+			this.updateInventoryUI();
+		}
+	}
+
+	// 更新背包显示
+	updateInventoryUI() {
+		if (!this.player) return;
+		this.inventoryUI.innerHTML = '<h3 style="margin-top:0;">背包</h3>';
+		
+		const inventory = this.player.inventory || [];
+		inventory.forEach((itemName, index) => {
+			const itemDiv = document.createElement('div');
+			itemDiv.style.marginBottom = '10px';
+			itemDiv.style.display = 'flex';
+			itemDiv.style.alignItems = 'center';
+			itemDiv.style.justifyContent = 'space-between';
+			
+			const nameSpan = document.createElement('span');
+			nameSpan.textContent = itemName;
+			
+			const buttonContainer = document.createElement('div');
+			
+			const inspectBtn = document.createElement('button');
+			inspectBtn.textContent = '检视';
+			inspectBtn.onclick = () => this.inspectItem(itemName);
+			inspectBtn.style.marginRight = '5px';
+			
+			const dropBtn = document.createElement('button');
+			dropBtn.textContent = '丢弃';
+			dropBtn.onclick = () => this.dropItem(index);
+			
+			buttonContainer.appendChild(inspectBtn);
+			buttonContainer.appendChild(dropBtn);
+			
+			itemDiv.appendChild(nameSpan);
+			itemDiv.appendChild(buttonContainer);
+			this.inventoryUI.appendChild(itemDiv);
+		});
+	}
+
+	// 加载物品
+	loadItems() {
+		const items = ['medkit', 'SCP-999'];
+		const gltfLoader = new THREE.GLTFLoader();
+		
+		items.forEach(itemName => {
+			const angle = Math.random() * Math.PI * 2;
+			const distance = 50 + Math.random() * 50; // 50-100 范围内
+			const position = new THREE.Vector3(
+				this.player.object.position.x + Math.cos(angle) * distance,
+				0,
+				this.player.object.position.z + Math.sin(angle) * distance
+			);
+
+			const itemId = `${itemName}_${Date.now()}_${Math.random()}`;
+			
+			gltfLoader.load(`${this.assetsPath}item/${itemName}.gltf`, (gltf) => {
+				const item = gltf.scene;
+				item.name = itemName;
+				item.userData.id = itemId;
+				item.position.copy(position);
+				item.scale.set(50, 50, 50);
+
+				// 添加发光材质
+				item.traverse(child => {
+					if (child.isMesh) {
+						child.material = new THREE.MeshPhongMaterial({
+							map: child.material.map,
+							emissive: new THREE.Color(0x000000),
+							emissiveIntensity: 0
+						});
+					}
+				});
+
+				this.scene.add(item);
+				this.interactableItems.set(itemId, item);
+				
+				// 发送物品生成事件
+				if (this.socket) {
+					this.socket.emit('itemSpawned', {
+						id: itemId,
+						name: itemName,
+						position: position
+					});
+				}
+			});
+		});
+	}
+
+	// 检视物品
+	inspectItem(itemName) {
+		// 保存当前场景状态
+		this.previousScene = this.scene;
+		this.previousCamera = this.camera.clone();
+	
+		// 创建检视场景
+		this.inspectScene = new THREE.Scene();
+		this.inspectScene.background = new THREE.Color(0x333333);
+	
+		// 设置检视相机
+		const aspectRatio = window.innerWidth / window.innerHeight;
+		this.camera = new THREE.PerspectiveCamera(75, aspectRatio, 0.1, 1000);
+		this.camera.position.set(0, 0, 200);
+	
+		// 添加光源
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+		this.inspectScene.add(ambientLight);
+	
+		const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+		directionalLight.position.set(10, 10, 10);
+		this.inspectScene.add(directionalLight);
+	
+		// 加载物品模型
+		const gltfLoader = new THREE.GLTFLoader();
+		gltfLoader.load(`${this.assetsPath}item/${itemName}.gltf`, (gltf) => {
+			const item = gltf.scene;
+			
+			// 自动调整大小
+			const box = new THREE.Box3().setFromObject(item);
+			const size = box.getSize(new THREE.Vector3());
+			const maxDim = Math.max(size.x, size.y, size.z);
+			const scale = 100 / maxDim;
+			item.scale.set(scale, scale, scale);
+			
+			// 居中模型
+			const center = box.getCenter(new THREE.Vector3());
+			item.position.sub(center);
+	
+			this.inspectScene.add(item);
+			this.inspectObject = item;
+	
+			// 添加检视说明
+			const textDiv = document.createElement('div');
+			textDiv.style.position = 'fixed';
+			textDiv.style.top = '20px';
+			textDiv.style.left = '50%';
+			textDiv.style.transform = 'translateX(-50%)';
+			textDiv.style.color = 'white';
+			textDiv.style.fontSize = '20px';
+			textDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+			textDiv.style.padding = '10px';
+			textDiv.style.borderRadius = '5px';
+			textDiv.style.zIndex = '1000';
+			textDiv.innerHTML = `正在检视: ${itemName}<br>按ESC退出`;
+			document.body.appendChild(textDiv);
+			this.inspectText = textDiv;
+	
+			// 开启检视模式
+			this.isInspecting = true;
+			
+			// 添加ESC退出检视
+			this.escapeHandler = (event) => {
+				if (event.key === 'Escape') {
+					this.exitInspectMode();
+				}
+			};
+			window.addEventListener('keydown', this.escapeHandler);
+		});
+	}
+	
+	exitInspectMode() {
+		if (!this.isInspecting) return;
+	
+		// 移除事件监听
+		if (this.escapeHandler) {
+			window.removeEventListener('keydown', this.escapeHandler);
+		}
+	
+		// 移除检视文本
+		if (this.inspectText && this.inspectText.parentNode) {
+			this.inspectText.parentNode.removeChild(this.inspectText);
+		}
+	
+		// 恢复场景
+		this.scene = this.previousScene;
+		this.camera = this.previousCamera;
+	
+		// 清理检视相关变量
+		this.inspectObject = null;
+		this.isInspecting = false;
+		this.inspectScene = null;
+	}
+
+	// 检查物品拾取
+	checkItemPickup() {
+		if (!this.player || this.player.isDead) return;
+		
+		const playerPos = this.player.object.position.clone();
+		this.interactableItems.forEach((item, itemId) => {
+			const distance = playerPos.distanceTo(item.position);
+			
+			// 高亮显示附近物品
+			item.traverse(child => {
+				if (child.isMesh && child.material) {
+					if (distance < 100) {
+						child.material.emissive.setHex(0x666666);
+						child.material.emissiveIntensity = 0.5;
+					} else {
+						child.material.emissive.setHex(0x000000);
+						child.material.emissiveIntensity = 0;
+					}
+					child.material.needsUpdate = true;
+				}
+			});
+
+			// 拾取物品
+			if (distance < 100) {
+				if (this.socket) {
+					this.socket.emit('itemPickup', {
+						itemId: itemId,
+						playerId: this.player.id
+					});
+				}
+				this.player.addItem(item.name);
+				this.scene.remove(item);
+				this.interactableItems.delete(itemId);
+				this.updateInventoryUI();
+			}
+		});
+	}
+
+	// 丢弃物品
+	dropItem(index) {
+		const itemName = this.player.inventory[index];
+		if (!itemName) return;
+	
+		// 从背包中移除
+		this.player.inventory.splice(index, 1);
+	
+		// 计算丢弃位置 - 在玩家前方
+		const playerPos = this.player.object.position.clone();
+		const playerDir = new THREE.Vector3(0, 0, 1);
+		playerDir.applyQuaternion(this.player.object.quaternion);
+		
+		const dropPos = new THREE.Vector3(
+			playerPos.x + (Math.random() - 0.5) * 20,
+			0,
+			playerPos.z + (Math.random() - 0.5) * 20
+		);
+	
+		// 发送丢弃事件
+		if (this.socket) {
+			this.socket.emit('itemDrop', {
+				name: itemName,
+				position: dropPos,
+				id: `item_${Date.now()}_${Math.random()}`
+			});
+		}
+	
+		this.updateInventoryUI();
+	}
+
+	// 添加新的加载单个物品的方法
+	loadSingleItem(itemName, position) {
+		const gltfLoader = new THREE.GLTFLoader();
+		const itemId = `${itemName}_${Date.now()}_${Math.random()}`;
+		
+		gltfLoader.load(
+			`${this.assetsPath}item/${itemName}.gltf`,
+			(gltf) => {
+				console.log(`Successfully loaded ${itemName}`);
+				const item = gltf.scene;
+				item.name = itemName;
+				item.userData.id = itemId;
+				item.position.copy(position);
+				item.scale.set(50, 50, 50);
+
+				// 添加发光材质
+				item.traverse(child => {
+					if (child.isMesh) {
+						child.material = new THREE.MeshPhongMaterial({
+							map: child.material.map,
+							emissive: new THREE.Color(0x000000),
+							emissiveIntensity: 0
+						});
+					}
+				});
+
+				this.scene.add(item);
+				this.interactableItems.set(itemId, item);
+				
+				// 发送物品生成事件到服务器
+				if (this.socket) {
+					this.socket.emit('itemSpawned', {
+						id: itemId,
+						name: itemName,
+						position: position
+					});
+				}
+			},
+			(xhr) => {
+				console.log(`${itemName} ${(xhr.loaded/xhr.total*100)}% loaded`);
+			},
+			(error) => {
+				console.error(`Error loading ${itemName}:`, error);
+			}
+		);
+	}
 }
 
 class Player {
@@ -758,7 +1135,7 @@ class Player {
         const player = this;
 
         // 模型加载部分
-        loader.load(`${game.assetsPath}fbx/anims/shishui.fbx`, function(object) {
+        loader.load(`${game.assetsPath}fbx/anims/shishui.fbx`, (object) => {
             console.log('Model loaded:', object);
 
             // 动画
@@ -851,9 +1228,16 @@ class Player {
 
                 // 本地玩家设置摄像机
                 if (player.local) {
-                    game.createCameras();
-                    game.sun.target = game.player.object;
-                    if (player.initSocket !== undefined) player.initSocket();
+                    // Wrap in setTimeout to ensure object is fully initialized
+                    setTimeout(() => {
+                        game.createCameras();
+                        if (game.sun) {
+                            game.sun.target = game.player.object;
+                        }
+                        if (player.initSocket) {
+                            player.initSocket();
+                        }
+                    }, 100);
                 }
             });
         });
@@ -864,6 +1248,7 @@ class Player {
 
         // 创建血条UI
         this.createHealthBar();
+        this.inventory = [];
     }
 
     createHealthBar() {
@@ -1010,6 +1395,24 @@ class Player {
 			if (this.socket) {
 				this.socket.emit('playerDied', { id: this.id });
 			}
+		}
+
+		// 掉落所有物品
+		if (this.inventory.length > 0 && this.socket) {
+			const playerPos = this.object.position.clone();
+			this.inventory.forEach(itemName => {
+				const dropPos = new THREE.Vector3(
+					playerPos.x + (Math.random() - 0.5) * 100,
+					0,
+					playerPos.z + (Math.random() - 0.5) * 100
+				);
+
+				this.socket.emit('itemDrop', {
+					name: itemName,
+					position: dropPos
+				});
+			});
+			this.inventory = [];
 		}
 	}
 
@@ -1256,27 +1659,57 @@ class Player {
             this.updateSocket();
         }
     }
+
+	addItem(itemName) {
+        this.inventory.push(itemName);
+        this.game.updateInventoryUI();
+    }
+
+    removeItem(index) {
+        return this.inventory.splice(index, 1)[0];
+    }
 }
 
-class PlayerLocal extends Player{
-	constructor(game, model){
-		super(game, model);
-		
-		const player = this;
-		const socket = io.connect();
-		socket.on('setId', function(data){
-			player.id = data.id;
-		});
-		socket.on('remoteData', function(data){
-			game.remoteData = data;
-		});
-		socket.on('deletePlayer', function(data){
-			const players = game.remotePlayers.filter(function(player){
-				if (player.id == data.id){
-					return player;
-				}
-			});
-			if (players.length>0){
+class PlayerLocal extends Player {
+    constructor(game, model) {
+        super(game, model);
+        
+        const player = this;
+        this.socket = io.connect();
+
+        // 监听物品被拾取事件
+        this.socket.on('itemPickedUp', (data) => {
+            const item = game.interactableItems.get(data.itemId);
+            if (item) {
+                console.log(`Item ${data.itemId} picked up by player ${data.playerId}`);
+                game.scene.remove(item);
+                game.interactableItems.delete(data.itemId);
+            }
+        });
+
+        // 监听物品丢弃事件
+        this.socket.on('itemDropped', (data) => {
+            console.log(`New item dropped: ${data.name} at position:`, data.position);
+            game.loadSingleItem(data.name, data.position);
+        });
+
+        // Use this.socket everywhere instead of socket
+        this.socket.on('setId', function(data) {
+            player.id = data.id;
+        });
+
+        this.socket.on('remoteData', function(data) {
+            game.remoteData = data;
+        });
+
+        // Change socket to this.socket
+        this.socket.on('deletePlayer', function(data) {
+            const players = game.remotePlayers.filter(function(player) {
+                if (player.id == data.id) {
+                    return player;
+                }
+            });
+            if (players.length>0){
 				let index = game.remotePlayers.indexOf(players[0]);
 				if (index!=-1){
 					game.remotePlayers.splice( index, 1 );
@@ -1290,25 +1723,30 @@ class PlayerLocal extends Player{
                     game.initialisingPlayers.splice(index, 1);
                 }
 			}
-		});
-        
-		socket.on('chat message', function(data){
-			document.getElementById('chat').style.bottom = '0px';
-			const player = game.getRemotePlayerById(data.id);
-			game.speechBubble.player = player;
-			game.chatSocketId = player.id;
-			game.activeCamera = game.cameras.chat;
-			game.speechBubble.update(data.message);
-		});
-        
-		$('#msg-form').submit(function(e){
-			socket.emit('chat message', { id:game.chatSocketId, message:$('#m').val() });
-			$('#m').val('');
-			return false;
-		});
-		
-		// 添加攻击事件监听
-		socket.on('playerAttacked', function(data) {
+        });
+
+        // Continue using this.socket for other events
+        this.socket.on('chat message', function(data) {
+            document.getElementById('chat').style.bottom = '0px';
+            const player = game.getRemotePlayerById(data.id);
+            game.speechBubble.player = player;
+            game.chatSocketId = player.id;
+            game.activeCamera = game.cameras.chat;
+            game.speechBubble.update(data.message);
+        });
+
+        // Update form submission to use this.socket
+        $('#msg-form').submit((e) => {
+            this.socket.emit('chat message', { 
+                id: game.chatSocketId, 
+                message: $('#m').val() 
+            });
+            $('#m').val('');
+            return false;
+        });
+
+        // ...rest of socket event handlers
+		this.socket.on('playerAttacked', function(data) {
 			console.log('Received attack event:', data);
 			
 			// 如果自己被攻击
@@ -1326,8 +1764,111 @@ class PlayerLocal extends Player{
 			}
 		});
 
-		this.socket = socket;
-	}
+		// 监听物品生成事件
+		this.socket.on('itemSpawned', function(data) {
+			const gltfLoader = new THREE.GLTFLoader();
+			gltfLoader.load(`${game.assetsPath}item/${data.name}.gltf`, (gltf) => {
+				const item = gltf.scene;
+				item.name = data.name;
+				item.userData.id = data.id;
+				item.position.copy(data.position);
+				item.scale.set(50, 50, 50);
+
+				// 添加发光材质
+				item.traverse(child => {
+					if (child.isMesh) {
+						child.material = new THREE.MeshPhongMaterial({
+							map: child.material.map,
+							emissive: new THREE.Color(0x000000),
+							emissiveIntensity : 0
+						});
+					}
+				});
+
+				game.scene.add(item);
+				game.interactableItems.set(data.id, item);
+			});
+		});
+
+		// 监听物品拾取事件
+		this.socket.on('itemPickup', function(data) {
+			const item = game.interactableItems.get(data.itemId);
+			if (item) {
+				game.scene.remove(item);
+				game.interactableItems.delete(data.itemId);
+			}
+		});
+
+		// 监听物品丢弃事件
+		this.socket.on('itemDrop', function(data) {
+			const gltfLoader = new THREE.GLTFLoader();
+			gltfLoader.load(`${game.assetsPath}item/${data.name}.gltf`, (gltf) => {
+				const item = gltf.scene;
+				item.name = data.name;
+				item.userData.id = `${data.name}_${Date.now()}_${Math.random()}`;
+				item.position.copy(data.position);
+				item.scale.set(50, 50, 50);
+
+				// 添加发光材质
+				item.traverse(child => {
+					if (child.isMesh) {
+						child.material = new THREE.MeshPhongMaterial({
+							map: child.material.map,
+							emissive: new THREE.Color(0x000000),
+							emissiveIntensity : 0
+						});
+					}
+				});
+
+				game.scene.add(item);
+				game.interactableItems.set(item.userData.id, item);
+			});
+		});
+
+		// 监听物品事件
+		this.socket.on('itemPickedUp', (data) => {
+			const item = game.interactableItems.get(data.itemId);
+			if (item) {
+				game.scene.remove(item);
+				game.interactableItems.delete(data.itemId);
+			}
+		});
+
+		this.socket.on('itemDropped', (data) => {
+			const gltfLoader = new THREE.GLTFLoader();
+			gltfLoader.load(`${game.assetsPath}item/${data.name}.gltf`, (gltf) => {
+				const item = gltf.scene;
+				item.name = data.name;
+				item.userData.id = data.id;
+				item.position.copy(data.position);
+				item.scale.set(50, 50, 50);
+
+				// 添加发光材质
+				item.traverse(child => {
+					if (child.isMesh) {
+						child.material = new THREE.MeshPhongMaterial({
+							map: child.material.map,
+							emissive: new THREE.Color(0x000000),
+							emissiveIntensity: 0
+						});
+					}
+				});
+
+				game.scene.add(item);
+				game.interactableItems.set(data.id, item);
+			});
+		});
+
+		this.socket.on('playerDied', (data) => {
+			if (data.inventory && data.inventory.length > 0) {
+				data.inventory.forEach(itemData => {
+					this.game.loadSingleItem(itemData.name, itemData.position);
+				});
+			}
+		});
+
+		this.socket = this.socket;
+    }
 	
 	initSocket(){
         console.log("Initializing socket for player");
