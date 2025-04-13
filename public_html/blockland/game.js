@@ -54,7 +54,10 @@ class Game{
             'Slide Hip Hop Dance.fbx',
 			'Breakdance Freezes.fbx',
 			'Gangnam Style.fbx',
-			'Northern Soul Floor Combo.fbx'
+			'Northern Soul Floor Combo.fbx',
+			'Standing Melee Kick.fbx',
+			'Mutant Dying.fbx',
+			'Dying.fbx'
         ];
 		
 		const options = {
@@ -126,8 +129,6 @@ class Game{
 			}
 		});
 
-		this.kunai = null;  // 存储苦无对象
-		this.kunaiPosition = null;  // 存储苦无位置
 	}
 	
 	initSfx(){
@@ -188,13 +189,6 @@ class Game{
 			})
 		};
 
-		// 苦无拾取音效
-		this.sfx.getKunai = new SFX({
-			context: this.sfx.context,
-			src: {mp3: `${this.assetsPath}sfx/get.mp3`},
-			loop: false,
-			volume: 0.5
-		});
 	}
 	
 	set activeCamera(object){
@@ -239,7 +233,6 @@ class Game{
 		this.player = new PlayerLocal(this);
 		
 		this.loadEnvironment(loader);
-		this.loadKunai();//苦无
 		
 		this.speechBubble = new SpeechBubble(this, "", 150);
 		this.speechBubble.mesh.position.set(0, 350, 0);
@@ -286,6 +279,12 @@ class Game{
 			document.addEventListener('click', startAudio, { once: true });
 			document.addEventListener('touchstart', startAudio, { once: true });
 		}
+
+		window.addEventListener('keydown', (event) => {
+            if (event.key.toLowerCase() === 'a' && this.player && !this.player.isDead) {
+                this.player.attack();
+            }
+        });
 
 	}
 	
@@ -374,12 +373,14 @@ class Game{
 			});
 	}
 	
-	playerControl(forward, turn){
+	playerControl(forward, turn) {
+		if (this.player.isDead) return; // 添加死亡检查
+		
 		turn = -turn;
 		
-		if (forward>0.3){
+		if (forward>0.3) {
 			if (this.player.action!='Walking' && this.player.action!='Running') this.player.action = 'Walking';
-		}else if (forward<-0.3){
+		}else if (forward<-0.3) {
 			if (this.player.action!='Walking Backwards') this.player.action = 'Walking Backwards';
 		}else{
 			forward = 0;
@@ -424,25 +425,24 @@ class Game{
 		this.activeCamera = this.cameras.back;	
 	}
 	
-	showMessage(msg, fontSize=20, onOK=null){
-		const txt = document.getElementById('message_text');
-		txt.innerHTML = msg;
-		txt.style.fontSize = fontSize + 'px';
-		const btn = document.getElementById('message_ok');
-		const panel = document.getElementById('message');
-		const game = this;
-		if (onOK!=null){
-			btn.onclick = function(){ 
-				panel.style.display = 'none';
-				onOK.call(game); 
-			}
-		}else{
-			btn.onclick = function(){
-				panel.style.display = 'none';
-			}
-		}
-		panel.style.display = 'flex';
-	}
+	showMessage(msg, fontSize=20) {
+    const messageDiv = document.createElement('div');
+    messageDiv.style.position = 'fixed';
+    messageDiv.style.top = '20%';
+    messageDiv.style.left = '50%';
+    messageDiv.style.transform = 'translate(-50%, -50%)';
+    messageDiv.style.color = 'white';
+    messageDiv.style.fontSize = `${fontSize}px`;
+    messageDiv.style.textShadow = '2px 2px black';
+    messageDiv.style.zIndex = '1000';
+    messageDiv.style.textAlign = 'center';
+    messageDiv.textContent = msg;
+    document.body.appendChild(messageDiv);
+
+    setTimeout(() => {
+        document.body.removeChild(messageDiv);
+    }, 3000);
+}
 	
 	onWindowResize() {
 		this.camera.aspect = window.innerWidth / window.innerHeight;
@@ -602,7 +602,6 @@ class Game{
 		}
 		
 		if (this.player.motion !== undefined) this.player.move(dt);
-		this.checkKunaiPickup();//苦无
 
 		if (this.cameras!=undefined && this.cameras.active!=undefined && this.player!==undefined && this.player.object!==undefined){
 			this.camera.position.lerp(this.cameras.active.getWorldPosition(new THREE.Vector3()), 0.05);
@@ -622,20 +621,22 @@ class Game{
 		
 		if (this.speechBubble!==undefined) this.speechBubble.show(this.camera.position);
 
-		this.checkKunaiPickup();
-		
-		// 添加苦无旋转动画
-		if (this.kunai) {
-			this.kunai.rotation.y += 0.05; // 缓慢旋转
+		// 更新所有玩家的血条
+		if (this.player) {
+			this.player.updateHealthBar();
 		}
+		this.remotePlayers.forEach(player => {
+			if (player && player.updateHealthBar) {
+				player.updateHealthBar();
+			}
+		});
 
-		// 更新位置信息显示
-		const debugInfo = document.getElementById('debugInfo');
-		if (debugInfo && this.kunai && this.player && this.player.object) {
-			const distance = this.player.object.position.distanceTo(this.kunai.position);
-			debugInfo.innerHTML = `
-				<div style="font-weight: bold;">distance: ${distance.toFixed(0)} m</div>
-			`;
+		// 如果在观战模式，摄像机跟随目标玩家
+		if (this.spectatorTarget) {
+			this.camera.position.copy(this.spectatorTarget.object.position);
+			this.camera.position.y += 300;
+			this.camera.position.z += 500;
+			this.camera.lookAt(this.spectatorTarget.object.position);
 		}
 
 		this.renderer.render( this.scene, this.camera );
@@ -653,132 +654,56 @@ class Game{
         }
     }
 
-	loadKunai() {
-        const loader = new THREE.FBXLoader();
-        const textureLoader = new THREE.TextureLoader();
-        const game = this;
-
-        // 创建调试信息显示器
-        const debugInfo = document.createElement('div');
-        debugInfo.id = 'debugInfo';
-        debugInfo.style.position = 'fixed';
-        debugInfo.style.top = '10px';
-        debugInfo.style.right = '10px';
-        debugInfo.style.backgroundColor = 'rgba(0,0,0,0.6)';
-        debugInfo.style.color = 'white';
-        debugInfo.style.padding = '15px';
-        debugInfo.style.fontFamily = 'Arial, sans-serif';
-        debugInfo.style.fontSize = '20px';  // 字体大小
-        debugInfo.style.borderRadius = '5px';
-        debugInfo.style.minWidth = '150px';
-        debugInfo.style.zIndex = '1000';
-        document.body.appendChild(debugInfo);
-
-        console.log("Loading Kunai model...");
-        loader.load(`${this.assetsPath}fbx/anims/KunaiKnife.fbx`, function(object) {
-            console.log("Kunai model loaded");
-            textureLoader.load(`${game.assetsPath}images/wood-079_alder-red-1_d.jpg`, function(texture) {
-                object.traverse(function(child) {
-                    if (child.isMesh) {
-                        child.material = new THREE.MeshStandardMaterial({
-                            map: texture,
-                            metalness: 0.7,
-                            roughness: 0.3
-                        });
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-                    }
-                });
-
-                game.kunai = object;
-                game.kunai.scale.set(1, 1, 1);
-                game.kunai.position.y = 100;
-
-                // 确保在添加到场景之前设置位置
-                const playerPos = game.player.object.position;
-                const radius = 500;
-                const angle = Math.random() * Math.PI * 2;
-                const x = playerPos.x + Math.cos(angle) * radius;
-                const z = playerPos.z + Math.sin(angle) * radius;
-                game.kunai.position.set(x, 100, z);
-
-                game.scene.add(game.kunai);
-                game.kunaiPosition = game.kunai.position.clone();
-                
-                console.log("Kunai spawned at:", {
-                    x: game.kunai.position.x,
-                    y: game.kunai.position.y,
-                    z: game.kunai.position.z
-                });
-            });
-        });
-    }
-
-    respawnKunai() {
-        if (!this.kunai) return;
-
-        // 在玩家附近随机生成位置
-        const playerPos = this.player.object.position;
-        const radius = 500; // 在玩家500单位范围内生成
-        const angle = Math.random() * Math.PI * 2;
+	switchToSpectatorMode() {
+    // 随机选择一个存活的玩家
+    const alivePlayers = this.remotePlayers.filter(player => !player.isDead);
+    if (alivePlayers.length > 0) {
+        const randomPlayer = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
         
-        const x = playerPos.x + Math.cos(angle) * radius;
-        const z = playerPos.z + Math.sin(angle) * radius;
-        const y = 100;  // 固定高度
-
-        this.kunai.position.set(x, y, z);
-        this.kunai.rotation.y = Math.random() * Math.PI * 2;
+        // 禁用所有控制
+        this.player.motion = undefined;
+        this.player.canMove = false;
         
-        if (!this.kunai.parent) {
-            this.scene.add(this.kunai);
+        // 隐藏所有UI元素
+        if (this.joystick) {
+            const joystickContainer = document.querySelector('.joystick-container');
+            if (joystickContainer) {
+                joystickContainer.style.display = 'none';
+            }
         }
         
-        this.kunaiPosition = new THREE.Vector3(x, y, z);
-        console.log("Kunai spawned at:", {x, y, z});
+        // 设置观战目标
+        this.spectatorTarget = randomPlayer;
+        
+        // 重置摄像机位置
+        this.camera.position.copy(randomPlayer.object.position);
+        this.camera.position.y += 300;
+        this.camera.position.z += 500;
+        
+        // 强制更新摄像机
+        this.camera.lookAt(randomPlayer.object.position);
+        
+        console.log("进入观战模式，观战目标:", randomPlayer.id);
+        
+        // 显示观战提示
+        const spectatorInfo = document.createElement('div');
+        spectatorInfo.id = 'spectatorInfo';
+        spectatorInfo.style.position = 'fixed';
+        spectatorInfo.style.top = '20px';
+        spectatorInfo.style.left = '50%';
+        spectatorInfo.style.transform = 'translateX(-50%)';
+        spectatorInfo.style.color = 'white';
+        spectatorInfo.style.fontSize = '24px';
+        spectatorInfo.style.fontWeight = 'bold';
+        spectatorInfo.style.textShadow = '2px 2px black';
+        spectatorInfo.style.zIndex = '1000';
+        spectatorInfo.style.backgroundColor = 'rgba(0,0,0,0.5)';
+        spectatorInfo.style.padding = '10px 20px';
+        spectatorInfo.style.borderRadius = '5px';
+        spectatorInfo.textContent = `正在观战 ${randomPlayer.id}`;
+        document.body.appendChild(spectatorInfo);
     }
-
-    checkKunaiPickup() {
-		if (!this.kunai || !this.player || !this.kunaiPosition) return;
-	
-		const distance = this.player.object.position.distanceTo(this.kunaiPosition);
-		if (distance < 200) {
-			// 播放拾取音效
-			if (this.sfx && this.sfx.getKunai) {
-				this.sfx.getKunai.play();
-			}
-	
-			// 显示胜利消息
-			this.showMessage("Congratulations！You find Kunai!", 30);
-	
-			// 在玩家周围2000范围内随机重生苦无
-			setTimeout(() => {
-				const playerPos = this.player.object.position;
-				const radius = 3000; // 刷新范围
-				const angle = Math.random() * Math.PI * 2;
-				
-				// 以玩家为中心计算新位置
-				const x = playerPos.x + Math.cos(angle) * radius;
-				const z = playerPos.z + Math.sin(angle) * radius;
-				const y = 0;  // 保持苦无的高度不变
-	
-				this.kunai.position.set(x, y, z);
-				this.kunai.rotation.y = Math.random() * Math.PI * 2;
-				this.kunaiPosition = this.kunai.position.clone();
-	
-				console.log("Kunai respawned at:", {
-					x: x,
-					y: y,
-					z: z,
-					playerPos: {
-						x: playerPos.x,
-						y: playerPos.y,
-						z: playerPos.z
-					},
-					distance: this.kunaiPosition.distanceTo(playerPos)
-				});
-			}, 1000); // 1秒后重生
-		}
-	}
+}
 }
 
 class Player {
@@ -913,6 +838,190 @@ class Player {
                 }
             });
         });
+
+        this.health = 5; // 初始5格血
+        this.isDead = false; // 死亡状态
+        this.isAttacking = false; // 攻击状态
+
+        // 创建血条UI
+        this.createHealthBar();
+    }
+
+    createHealthBar() {
+        this.healthBar = document.createElement('div');
+        this.healthBar.style.position = 'absolute';
+        this.healthBar.style.width = '100px';
+        this.healthBar.style.height = '10px';
+        this.healthBar.style.backgroundColor = '#333';
+        this.healthBar.style.border = '2px solid #000'; // 加粗边框
+        this.healthBar.style.zIndex = '1000';
+        this.healthBar.style.display = 'block';
+        this.healthBar.style.pointerEvents = 'none'; // 防止血条影响点击
+        
+        this.healthFill = document.createElement('div');
+        this.healthFill.style.width = '100%';
+        this.healthFill.style.height = '100%';
+        this.healthFill.style.backgroundColor = '#ff0000';
+        this.healthFill.style.transition = 'width 0.3s';
+        
+        this.healthBar.appendChild(this.healthFill);
+        document.body.appendChild(this.healthBar);
+    }
+
+    updateHealthBar() {
+        if (!this.healthBar || !this.game.camera) return;
+
+        // 计算屏幕坐标
+        const vector = new THREE.Vector3();
+        const widthHalf = window.innerWidth / 2;
+        const heightHalf = window.innerHeight / 2;
+
+        // 获取角色头部位置
+        vector.setFromMatrixPosition(this.object.matrixWorld);
+        vector.y += 200; // 将血条放在角色头顶上方
+
+        // 将3D坐标转换为屏幕坐标
+        vector.project(this.game.camera);
+        
+        const x = (vector.x * widthHalf) + widthHalf;
+        const y = -(vector.y * heightHalf) + heightHalf;
+
+        // 设置血条位置和显示状态
+        if (x >= 0 && x <= window.innerWidth && y >= 0 && y <= window.innerHeight) {
+            this.healthBar.style.display = 'block';
+            this.healthBar.style.left = `${x - 50}px`; // 居中对齐
+            this.healthBar.style.top = `${y - 50}px`;
+            this.healthFill.style.width = `${(this.health / 5) * 100}%`;
+        } else {
+            this.healthBar.style.display = 'none';
+        }
+    }
+
+    takeDamage() {
+        if (this.isDead) return;
+        
+        this.health--;
+        console.log(`Player ${this.id} took damage. Health: ${this.health}`);
+        
+        // 更新血条显示
+        this.updateHealthBar();
+
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+
+	die() {
+		if (this.isDead) return;
+		
+		this.isDead = true;
+		this.action = 'Mutant Dying';
+		this.motion = undefined;
+		
+		if (this.local) {
+			if (this.game.joystick) {
+				// 完全移除遥感容器
+				const joystickContainer = document.querySelector('.joystick-container');
+				if (joystickContainer) {
+					joystickContainer.style.display = 'none';
+					// 或者完全移除
+					// joystickContainer.remove();
+				}
+			}
+	
+			// 2. 显示死亡提示
+			const gameOverDiv = document.createElement('div');
+			gameOverDiv.id = 'gameOverMessage';
+			gameOverDiv.style.position = 'fixed';
+			gameOverDiv.style.top = '30%';
+			gameOverDiv.style.left = '50%';
+			gameOverDiv.style.transform = 'translate(-50%, -50%)';
+			gameOverDiv.style.color = 'red';
+			gameOverDiv.style.fontSize = '48px';
+			gameOverDiv.style.fontWeight = 'bold';
+			gameOverDiv.style.textShadow = '2px 2px black';
+			gameOverDiv.style.zIndex = '1000';
+			gameOverDiv.textContent = '你已死亡!';
+			document.body.appendChild(gameOverDiv);
+	
+			// 3. 创建倒计时显示
+			const countdownDiv = document.createElement('div');
+			countdownDiv.id = 'countdownMessage';
+			countdownDiv.style.position = 'fixed';
+			countdownDiv.style.top = '40%';
+			countdownDiv.style.left = '50%';
+			countdownDiv.style.transform = 'translate(-50%, -50%)';
+			countdownDiv.style.color = 'white';
+			countdownDiv.style.fontSize = '36px';
+			countdownDiv.style.textShadow = '2px 2px black';
+			countdownDiv.style.zIndex = '1000';
+			document.body.appendChild(countdownDiv);
+	
+			// 4. 播放死亡动画序列
+			const mutantDyingDuration = this.animations['Mutant Dying'].duration * 1000;
+			console.log("播放死亡动画，持续时间:", mutantDyingDuration);
+			
+			setTimeout(() => {
+				// 切换到持续死亡动画
+				this.action = 'Dying';
+				console.log("切换到持续死亡动画");
+				
+				// 5. 开始倒计时
+				let countdown = 5;
+				const countdownInterval = setInterval(() => {
+					countdownDiv.textContent = `${countdown}秒后进入观战模式`;
+					countdown--;
+					
+					if (countdown < 0) {
+						// 清理倒计时
+						clearInterval(countdownInterval);
+						
+						// 移除UI元素
+						document.body.removeChild(countdownDiv);
+						document.body.removeChild(gameOverDiv);
+						
+						// 6. 进入观战模式
+						console.log("进入观战模式");
+						this.game.switchToSpectatorMode();
+					}
+				}, 1000);
+			}, mutantDyingDuration);
+	
+			// 发送死亡状态到服务器
+			if (this.socket) {
+				this.socket.emit('playerDied', { id: this.id });
+			}
+		}
+	}
+
+    attack() {
+        if (this.isDead || this.isAttacking) return;
+
+        this.isAttacking = true;
+        this.action = 'Standing Melee Kick';
+
+        // 检测2单位距离内的其他玩家
+        this.game.remotePlayers.forEach(player => {
+            if (!player.isDead) {
+                const distance = this.object.position.distanceTo(player.object.position);
+                if (distance <= 200) { // 增大检测范围，使其更容易命中
+                    console.log(`Attacking player ${player.id} at distance ${distance}`);
+                    // 直接发送攻击事件
+                    this.socket.emit('playerAttack', {
+                        attackerId: this.id,
+                        targetId: player.id
+                    });
+                }
+            }
+        });
+
+        // 攻击动画结束后重置状态
+        setTimeout(() => {
+            this.isAttacking = false;
+            if (!this.isDead) {
+                this.action = 'Idle';
+            }
+        }, this.animations['Standing Melee Kick'].duration * 1000);
     }
     
     // 打印动画状态
@@ -1031,98 +1140,79 @@ class Player {
                 }
             }
         }
+
+        this.updateHealthBar();
     }
 
-    move(dt){
-        const pos = this.object.position.clone();
-        pos.y += 60;
-        
-        let dir = new THREE.Vector3();
-        let raycaster = new THREE.Raycaster();
-        let blocked = false;
-        
-        // 前方碰撞检测
-        this.object.getWorldDirection(dir);
-        if (this.motion.forward < 0) dir.negate();
-        raycaster.set(pos, dir);
+    move(dt) {
+        // 如果已死亡或不能移动，直接返回
+        if (this.isDead) return;
 
-        // 检测与其他玩家的碰撞
-        if (this.game.remoteColliders && this.game.remoteColliders.length > 0) {
+    const pos = this.object.position.clone();
+    pos.y += 60;
+    
+    let dir = new THREE.Vector3();
+    let raycaster = new THREE.Raycaster();
+    let blocked = false;
+    
+    // 前方碰撞检测
+    this.object.getWorldDirection(dir);
+    if (this.motion.forward < 0) dir.negate();
+    raycaster.set(pos, dir);
+
+        // 检测与玩家和环境的碰撞
+        if (this.game.remoteColliders?.length > 0) {
             const playerCollisions = raycaster.intersectObjects(this.game.remoteColliders);
             if (playerCollisions.length > 0 && playerCollisions[0].distance < 50) {
-                console.log("Player collision detected!");
                 blocked = true;
             }
         }
 
-        // 检测与环境的碰撞
         if (!blocked && this.game.colliders) {
             const envCollisions = raycaster.intersectObjects(this.game.colliders);
             if (envCollisions.length > 0 && envCollisions[0].distance < 50) {
-                console.log("Environment collision detected!");
                 blocked = true;
             }
         }
 
         // 移动处理
-        if (!blocked){
-            if (this.motion.forward > 0){
+        if (!blocked) {
+            if (this.motion.forward > 0) {
                 const speed = (this.action == 'Running') ? 500 : 150;
                 this.object.translateZ(dt * speed);
-            }else{
+            } else {
                 this.object.translateZ(-dt * 30);
             }
         }
 
         // 左右碰撞检测
-        if (this.game.remoteColliders || this.game.colliders) {
-            // 左侧检测
-            dir.set(-1, 0, 0);
+        [-1, 1].forEach(direction => {
+            dir.set(direction, 0, 0);
             dir.applyMatrix4(this.object.matrix);
             dir.normalize();
             raycaster.set(pos, dir);
 
-            let leftCollisions = [];
+            let collisions = [];
             if (this.game.colliders) {
-                leftCollisions = leftCollisions.concat(raycaster.intersectObjects(this.game.colliders));
+                collisions = collisions.concat(raycaster.intersectObjects(this.game.colliders));
             }
             if (this.game.remoteColliders) {
-                leftCollisions = leftCollisions.concat(raycaster.intersectObjects(this.game.remoteColliders));
+                collisions = collisions.concat(raycaster.intersectObjects(this.game.remoteColliders));
             }
 
-            if (leftCollisions.length > 0 && leftCollisions[0].distance < 50) {
-                this.object.translateX(50 - leftCollisions[0].distance);
+            if (collisions.length > 0 && collisions[0].distance < 50) {
+                this.object.translateX(direction * (50 - collisions[0].distance));
             }
+        });
 
-            // 右侧检测
-            dir.set(1, 0, 0);
-            dir.applyMatrix4(this.object.matrix);
-            dir.normalize();
-            raycaster.set(pos, dir);
-
-            let rightCollisions = [];
-            if (this.game.colliders) {
-                rightCollisions = rightCollisions.concat(raycaster.intersectObjects(this.game.colliders));
-            }
-            if (this.game.remoteColliders) {
-                rightCollisions = rightCollisions.concat(raycaster.intersectObjects(this.game.remoteColliders));
-            }
-
-            if (rightCollisions.length > 0 && rightCollisions[0].distance < 50) {
-                this.object.translateX(-(50 - rightCollisions[0].distance));
-            }
-        }
-
-
+        // 垂直方向检测
         dir.set(0, -1, 0);
         pos.y += 50;
         raycaster.set(pos, dir);
         const gravity = 30;
 
-        let groundCollisions = [];
-        if (this.game.colliders) {
-            groundCollisions = raycaster.intersectObjects(this.game.colliders);
-        }
+        let groundCollisions = this.game.colliders ? 
+            raycaster.intersectObjects(this.game.colliders) : [];
 
         if (groundCollisions.length > 0) {
             const targetY = pos.y - groundCollisions[0].distance;
@@ -1141,7 +1231,11 @@ class Player {
         }
 
         this.object.rotateY(this.motion.turn * dt);
-        this.updateSocket();
+        
+        // 如果是本地玩家，更新socket
+        if (this.local) {
+            this.updateSocket();
+        }
     }
 }
 
@@ -1194,6 +1288,25 @@ class PlayerLocal extends Player{
 			return false;
 		});
 		
+		// 添加攻击事件监听
+		socket.on('playerAttacked', function(data) {
+			console.log('Received attack event:', data);
+			
+			// 如果自己被攻击
+			if (data.targetId === player.id) {
+				console.log(`Player ${player.id} takes damage`);
+				player.takeDamage();
+			}
+			// 如果其他玩家被攻击
+			else {
+				const targetPlayer = game.getRemotePlayerById(data.targetId);
+				if (targetPlayer) {
+					console.log(`Remote player ${targetPlayer.id} takes damage`);
+					targetPlayer.takeDamage();
+				}
+			}
+		});
+
 		this.socket = socket;
 	}
 	
@@ -1210,133 +1323,21 @@ class PlayerLocal extends Player{
         });
     }
 
-    updateSocket() {
-        if (this.socket !== undefined) {
-            const data = {
-                x: this.object.position.x,
-                y: this.object.position.y,
-                z: this.object.position.z,
-                h: this.object.rotation.y,  
-                pb: 0,                      // 保持为0，避免俯仰角
-                action: this.action,
-                model: this.model,
-                id: this.id
-            };
-            
-            this.socket.emit('update', data);
-        }
-    }
-	
-	move(dt){
-        const pos = this.object.position.clone();
-        pos.y += 60;
-        
-        let dir = new THREE.Vector3();
-        let raycaster = new THREE.Raycaster();
-        let blocked = false;
-        
-        // 前方碰撞检测
-        this.object.getWorldDirection(dir);
-        if (this.motion.forward < 0) dir.negate();
-        raycaster.set(pos, dir);
-
-        // 检测与其他玩家的碰撞
-        if (this.game.remoteColliders && this.game.remoteColliders.length > 0) {
-            const playerCollisions = raycaster.intersectObjects(this.game.remoteColliders);
-            if (playerCollisions.length > 0 && playerCollisions[0].distance < 50) {
-                console.log("Player collision detected!");
-                blocked = true;
-            }
-        }
-
-        // 检测与环境的碰撞
-        if (!blocked && this.game.colliders) {
-            const envCollisions = raycaster.intersectObjects(this.game.colliders);
-            if (envCollisions.length > 0 && envCollisions[0].distance < 50) {
-                console.log("Environment collision detected!");
-                blocked = true;
-            }
-        }
-
-        // 移动处理
-        if (!blocked){
-            if (this.motion.forward > 0){
-                const speed = (this.action == 'Running') ? 500 : 150;
-                this.object.translateZ(dt * speed);
-            }else{
-                this.object.translateZ(-dt * 30);
-            }
-        }
-
-        // 左右碰撞检测
-        if (this.game.remoteColliders || this.game.colliders) {
-            // 左侧检测
-            dir.set(-1, 0, 0);
-            dir.applyMatrix4(this.object.matrix);
-            dir.normalize();
-            raycaster.set(pos, dir);
-
-            let leftCollisions = [];
-            if (this.game.colliders) {
-                leftCollisions = leftCollisions.concat(raycaster.intersectObjects(this.game.colliders));
-            }
-            if (this.game.remoteColliders) {
-                leftCollisions = leftCollisions.concat(raycaster.intersectObjects(this.game.remoteColliders));
-            }
-
-            if (leftCollisions.length > 0 && leftCollisions[0].distance < 50) {
-                this.object.translateX(50 - leftCollisions[0].distance);
-            }
-
-            // 右侧检测
-            dir.set(1, 0, 0);
-            dir.applyMatrix4(this.object.matrix);
-            dir.normalize();
-            raycaster.set(pos, dir);
-
-            let rightCollisions = [];
-            if (this.game.colliders) {
-                rightCollisions = rightCollisions.concat(raycaster.intersectObjects(this.game.colliders));
-            }
-            if (this.game.remoteColliders) {
-                rightCollisions = rightCollisions.concat(raycaster.intersectObjects(this.game.remoteColliders));
-            }
-
-            if (rightCollisions.length > 0 && rightCollisions[0].distance < 50) {
-                this.object.translateX(-(50 - rightCollisions[0].distance));
-            }
-        }
-
-        // 垂直方向检测（原有代码）
-        dir.set(0, -1, 0);
-        pos.y += 50;
-        raycaster.set(pos, dir);
-        const gravity = 30;
-
-        let groundCollisions = [];
-        if (this.game.colliders) {
-            groundCollisions = raycaster.intersectObjects(this.game.colliders);
-        }
-
-        if (groundCollisions.length > 0) {
-            const targetY = pos.y - groundCollisions[0].distance;
-            if (targetY > this.object.position.y) {
-                this.object.position.y = 0.8 * this.object.position.y + 0.2 * targetY;
-                this.velocityY = 0;
-            } else if (targetY < this.object.position.y) {
-                if (this.velocityY === undefined) this.velocityY = 0;
-                this.velocityY += dt * gravity;
-                this.object.position.y -= this.velocityY;
-                if (this.object.position.y < targetY) {
-                    this.velocityY = 0;
-                    this.object.position.y = targetY;
-                }
-            }
-        }
-
-        this.object.rotateY(this.motion.turn * dt);
-        this.updateSocket();
-    }
+	updateSocket() {
+		if (this.socket !== undefined && !this.isDead) { // 添加死亡检查
+			const data = {
+				x: this.object.position.x,
+				y: this.object.position.y,
+				z: this.object.position.z,
+				h: this.object.rotation.y,
+				pb: 0,
+				action: this.action,
+				model: this.model,
+				id: this.id
+			};
+			this.socket.emit('update', data);
+		}
+	}
 }
 
 class SpeechBubble{

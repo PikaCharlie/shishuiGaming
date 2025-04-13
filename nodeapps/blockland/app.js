@@ -11,7 +11,13 @@ app.get('/',function(req, res) {
 });
 
 io.sockets.on('connection', function(socket){
-	socket.userData = { x:0, y:0, z:0, heading:0 };//Default values;
+	socket.userData = { 
+        x:0, 
+        y:0, 
+        z:0, 
+        heading:0,
+        health: 5  // 添加初始血量
+    };
  
 	console.log(`${socket.id} connected`);
 	socket.emit('setId', { id:socket.id });
@@ -44,7 +50,28 @@ io.sockets.on('connection', function(socket){
 	socket.on('chat message', function(data){
 		console.log(`chat message:${data.id} ${data.message}`);
 		io.to(data.id).emit('chat message', { id: socket.id, message: data.message });
-	})
+	});
+
+    // 添加攻击事件处理
+    socket.on('playerAttack', function(data){
+        console.log(`Player ${data.attackerId} attacks player ${data.targetId}`);
+        // 广播攻击事件给所有玩家
+        io.emit('playerAttacked', {
+            attackerId: data.attackerId,
+            targetId: data.targetId
+        });
+    });
+
+    socket.on('playerDied', function(data) {
+        socket.userData.isDead = true;
+        socket.userData.action = 'Dying'; // 设置死亡动画
+        
+        // 广播死亡事件给所有玩家
+        io.emit('playerDied', {
+            id: data.id,
+            action: 'Dying'
+        });
+    });
 });
 
 http.listen(2002,'0.0.0.0', function(){
@@ -68,7 +95,8 @@ setInterval(function(){
 				z: socket.userData.z,
 				heading: socket.userData.heading,
 				pb: socket.userData.pb,
-				action: socket.userData.action
+				action: socket.userData.action,
+                health: socket.userData.health  // 添加血量信息
 			});    
 		}
     }
