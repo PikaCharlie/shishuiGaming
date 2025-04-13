@@ -631,12 +631,10 @@ class Game{
 			}
 		});
 
-		// 如果在观战模式，摄像机跟随目标玩家
-		if (this.spectatorTarget) {
-			this.camera.position.copy(this.spectatorTarget.object.position);
-			this.camera.position.y += 300;
-			this.camera.position.z += 500;
-			this.camera.lookAt(this.spectatorTarget.object.position);
+		// 如果在观战模式，更新摄像机位置
+		if (this.spectatorTarget && !this.cameras.active) {
+			const targetPos = this.spectatorTarget.object.position;
+			this.camera.lookAt(targetPos);
 		}
 
 		this.renderer.render( this.scene, this.camera );
@@ -655,35 +653,56 @@ class Game{
     }
 
 	switchToSpectatorMode() {
-    // 随机选择一个存活的玩家
     const alivePlayers = this.remotePlayers.filter(player => !player.isDead);
     if (alivePlayers.length > 0) {
         const randomPlayer = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
         
-        // 禁用所有控制
-        this.player.motion = undefined;
-        this.player.canMove = false;
-        
-        // 隐藏所有UI元素
-        if (this.joystick) {
-            const joystickContainer = document.querySelector('.joystick-container');
-            if (joystickContainer) {
-                joystickContainer.style.display = 'none';
-            }
-        }
-        
         // 设置观战目标
         this.spectatorTarget = randomPlayer;
         
-        // 重置摄像机位置
-        this.camera.position.copy(randomPlayer.object.position);
-        this.camera.position.y += 300;
-        this.camera.position.z += 500;
+        // 设置初始摄像机位置
+        this.spectatorAngle = 0;  // 初始角度
+        this.spectatorDistance = 1000;  // 观战距离
+        this.spectatorHeight = 500;     // 观战高度
+
+        // 禁用原有的摄像机控制
+        this.cameras.active = null;
         
-        // 强制更新摄像机
-        this.camera.lookAt(randomPlayer.object.position);
-        
-        console.log("进入观战模式，观战目标:", randomPlayer.id);
+        // 更新摄像机控制逻辑
+        if (this.joystick) {
+            // 保持遥感可见，但更改其功能
+            this.joystick.onMove = (forward, turn) => {
+                if (this.spectatorTarget) {
+                    // 使用遥感的左右移动来旋转视角 (降低速度)
+                    this.spectatorAngle += turn * 0.2;
+                    
+                    // 使用遥感的前后移动来调整距离 (降低速度)
+                    this.spectatorDistance = Math.max(500, Math.min(2000, 
+                        this.spectatorDistance - forward * 2));
+
+                    // 计算新的摄像机位置
+                    const targetPos = this.spectatorTarget.object.position;
+                    const angle = this.spectatorAngle;
+                    
+                    // 更新摄像机位置
+                    this.camera.position.x = targetPos.x + Math.sin(angle) * this.spectatorDistance;
+                    this.camera.position.z = targetPos.z + Math.cos(angle) * this.spectatorDistance;
+                    this.camera.position.y = targetPos.y + this.spectatorHeight;
+                    
+                    // 始终看向目标玩家
+                    this.camera.lookAt(targetPos);
+                }
+            };
+        }
+
+        // 初始化摄像机位置
+        const targetPos = randomPlayer.object.position;
+        this.camera.position.set(
+            targetPos.x + Math.sin(this.spectatorAngle) * this.spectatorDistance,
+            targetPos.y + this.spectatorHeight,
+            targetPos.z + Math.cos(this.spectatorAngle) * this.spectatorDistance
+        );
+        this.camera.lookAt(targetPos);
         
         // 显示观战提示
         const spectatorInfo = document.createElement('div');
@@ -700,7 +719,7 @@ class Game{
         spectatorInfo.style.backgroundColor = 'rgba(0,0,0,0.5)';
         spectatorInfo.style.padding = '10px 20px';
         spectatorInfo.style.borderRadius = '5px';
-        spectatorInfo.textContent = `正在观战 ${randomPlayer.id}`;
+        spectatorInfo.textContent = `正在观战 ${randomPlayer.id}\n使用遥感调整视角`;
         document.body.appendChild(spectatorInfo);
     }
 }
