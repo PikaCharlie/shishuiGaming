@@ -994,20 +994,15 @@ class Game{
         const distance = playerPos.distanceTo(item.position);
         
         if (distance < 100) {
-            // 先发送拾取事件
-            if (this.player.socket) {  // 使用 this.player.socket 而不是 this.socket
+            // 先发送拾取事件给服务器
+            if (this.player.socket) {
                 this.player.socket.emit('itemPickup', {
                     itemId: itemId,
                     playerId: this.player.id,
                     name: item.name
                 });
             }
-
-            // 本地处理
-            this.player.addItem(item.name);
-            this.scene.remove(item);  // 改为 this.scene.remove(item)
-            this.interactableItems.delete(itemId);
-            this.updateInventoryUI();
+            // 注意：不在这里直接处理本地物品移除，而是等待服务器确认
         }
     });
 }
@@ -1659,10 +1654,11 @@ class PlayerLocal extends Player {
             console.log('Item picked up:', data);
             const item = game.interactableItems.get(data.itemId);
             if (item) {
+                // 从场景中移除物品
                 game.scene.remove(item);
                 game.interactableItems.delete(data.itemId);
                 
-                // 如果是当前玩家拾取的，添加到背包
+                // 只有拾取者才添加到背包
                 if (data.playerId === this.id) {
                     this.addItem(data.name);
                     game.updateInventoryUI();
@@ -1673,8 +1669,10 @@ class PlayerLocal extends Player {
         // 监听物品丢弃事件
         this.socket.on('itemDropped', (data) => {
             console.log('Item dropped:', data);
-            // 生成新的物品，对所有玩家可见
-            game.loadSingleItem(data.name, data.position, data.id);
+            // 只有在场景中不存在该物品时才添加
+            if (!game.interactableItems.has(data.id)) {
+                game.loadSingleItem(data.name, data.position, data.id);
+            }
         });
 
         // Use this.socket everywhere instead of socket
