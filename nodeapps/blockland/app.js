@@ -90,26 +90,27 @@ io.sockets.on('connection', function(socket){
     });
 
     socket.on('itemPickup', function(data) {
-        // 广播物品被拾取
+        console.log('Item pickup:', data);
+        // 广播给所有玩家，包括拾取者
         io.emit('itemPickedUp', {
             itemId: data.itemId,
-            playerId: data.playerId
+            playerId: data.playerId,
+            name: data.name
         });
         worldItems.delete(data.itemId);
     });
 
     socket.on('itemDrop', function(data) {
-        // 为丢弃的物品生成新ID
-        const itemId = `item_${Date.now()}_${Math.random()}`;
+        console.log('Item drop:', data);
         const itemData = {
-            id: itemId,
+            id: data.id,
             name: data.name,
-            position: data.position
+            position: data.position,
+            playerId: data.playerId
         };
-        
-        // 广播物品掉落
-        io.emit('itemDropped', itemData);
         worldItems.set(data.id, itemData);
+        // 广播给所有玩家，包括丢弃者
+        io.emit('itemDropped', itemData);
     });
 
     // 当玩家连接时，发送现有物品信息

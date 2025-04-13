@@ -987,41 +987,30 @@ class Game{
 
 	// 检查物品拾取
 	checkItemPickup() {
-		if (!this.player || this.player.isDead) return;
-		
-		const playerPos = this.player.object.position.clone();
-		this.interactableItems.forEach((item, itemId) => {
-			const distance = playerPos.distanceTo(item.position);
-			
-			// 高亮显示附近物品
-			item.traverse(child => {
-				if (child.isMesh && child.material) {
-					if (distance < 100) {
-						child.material.emissive.setHex(0x666666);
-						child.material.emissiveIntensity = 0.5;
-					} else {
-						child.material.emissive.setHex(0x000000);
-						child.material.emissiveIntensity = 0;
-					}
-					child.material.needsUpdate = true;
-				}
-			});
+    if (!this.player || this.player.isDead) return;
+    
+    const playerPos = this.player.object.position.clone();
+    this.interactableItems.forEach((item, itemId) => {
+        const distance = playerPos.distanceTo(item.position);
+        
+        if (distance < 100) {
+            // 先发送拾取事件
+            if (this.player.socket) {  // 使用 this.player.socket 而不是 this.socket
+                this.player.socket.emit('itemPickup', {
+                    itemId: itemId,
+                    playerId: this.player.id,
+                    name: item.name
+                });
+            }
 
-			// 拾取物品
-			if (distance < 100) {
-				if (this.socket) {
-					this.socket.emit('itemPickup', {
-						itemId: itemId,
-						playerId: this.player.id
-					});
-				}
-				this.player.addItem(item.name);
-				this.scene.remove(item);
-				this.interactableItems.delete(itemId);
-				this.updateInventoryUI();
-			}
-		});
-	}
+            // 本地处理
+            this.player.addItem(item.name);
+            this.scene.remove(item);  // 改为 this.scene.remove(item)
+            this.interactableItems.delete(itemId);
+            this.updateInventoryUI();
+        }
+    });
+}
 
 	// 丢弃物品
 	dropItem(index) {
@@ -1031,44 +1020,45 @@ class Game{
 		// 从背包中移除
 		this.player.inventory.splice(index, 1);
 	
-		// 计算丢弃位置 - 在玩家前方
+		// 计算丢弃位置
 		const playerPos = this.player.object.position.clone();
-		const playerDir = new THREE.Vector3(0, 0, 1);
-		playerDir.applyQuaternion(this.player.object.quaternion);
-		
 		const dropPos = new THREE.Vector3(
 			playerPos.x + (Math.random() - 0.5) * 20,
 			0,
 			playerPos.z + (Math.random() - 0.5) * 20
 		);
 	
-		// 发送丢弃事件
-		if (this.socket) {
-			this.socket.emit('itemDrop', {
+		// 生成新的物品ID
+		const newItemId = `item_${Date.now()}_${Math.random()}`;
+	
+		// 发送丢弃事件到服务器
+		if (this.player.socket) {
+			this.player.socket.emit('itemDrop', {
+				id: newItemId,
 				name: itemName,
 				position: dropPos,
-				id: `item_${Date.now()}_${Math.random()}`
+				playerId: this.player.id
 			});
 		}
 	
 		this.updateInventoryUI();
 	}
-
-	// 添加新的加载单个物品的方法
-	loadSingleItem(itemName, position) {
+	
+	// 修改 loadSingleItem 方法，添加 itemId 参数
+	loadSingleItem(itemName, position, itemId = null) {
 		const gltfLoader = new THREE.GLTFLoader();
-		const itemId = `${itemName}_${Date.now()}_${Math.random()}`;
+		const id = itemId || `${itemName}_${Date.now()}_${Math.random()}`;
 		
 		gltfLoader.load(
 			`${this.assetsPath}item/${itemName}.gltf`,
 			(gltf) => {
-				console.log(`Successfully loaded ${itemName}`);
+				console.log(`Successfully loaded ${itemName} with id ${id}`);
 				const item = gltf.scene;
 				item.name = itemName;
-				item.userData.id = itemId;
+				item.userData.id = id;
 				item.position.copy(position);
 				item.scale.set(50, 50, 50);
-
+	
 				// 添加发光材质
 				item.traverse(child => {
 					if (child.isMesh) {
@@ -1079,26 +1069,13 @@ class Game{
 						});
 					}
 				});
-
+	
 				this.scene.add(item);
-				this.interactableItems.set(itemId, item);
-				
-				// 发送物品生成事件到服务器
-				if (this.socket) {
-					this.socket.emit('itemSpawned', {
-						id: itemId,
-						name: itemName,
-						position: position
-					});
-				}
-			},
-			(xhr) => {
-				console.log(`${itemName} ${(xhr.loaded/xhr.total*100)}% loaded`);
-			},
-			(error) => {
-				console.error(`Error loading ${itemName}:`, error);
+				this.interactableItems.set(id, item);
 			}
 		);
+	
+		return id;
 	}
 }
 
@@ -1679,18 +1656,25 @@ class PlayerLocal extends Player {
 
         // 监听物品被拾取事件
         this.socket.on('itemPickedUp', (data) => {
+            console.log('Item picked up:', data);
             const item = game.interactableItems.get(data.itemId);
             if (item) {
-                console.log(`Item ${data.itemId} picked up by player ${data.playerId}`);
                 game.scene.remove(item);
                 game.interactableItems.delete(data.itemId);
+                
+                // 如果是当前玩家拾取的，添加到背包
+                if (data.playerId === this.id) {
+                    this.addItem(data.name);
+                    game.updateInventoryUI();
+                }
             }
         });
 
         // 监听物品丢弃事件
         this.socket.on('itemDropped', (data) => {
-            console.log(`New item dropped: ${data.name} at position:`, data.position);
-            game.loadSingleItem(data.name, data.position);
+            console.log('Item dropped:', data);
+            // 生成新的物品，对所有玩家可见
+            game.loadSingleItem(data.name, data.position, data.id);
         });
 
         // Use this.socket everywhere instead of socket
