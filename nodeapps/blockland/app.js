@@ -13,6 +13,10 @@ app.get('/',function(req, res) {
 // 添加物品状态管理
 const worldItems = new Map();
 
+// 初始物品管理
+const initialItems = ['medkit', 'SCP-999'];
+let initialItemsGenerated = false;
+
 io.sockets.on('connection', function(socket){
 	socket.userData = { 
         x:0, 
@@ -89,15 +93,24 @@ io.sockets.on('connection', function(socket){
         socket.broadcast.emit('itemSpawned', data);
     });
 
+    // 在 app.js 中修改
     socket.on('itemPickup', function(data) {
-        console.log('Item pickup:', data);
-        // 广播给所有玩家，包括拾取者
+        console.log('Server: Item pickup:', data.itemId);
+        
+        // 从世界物品列表中删除
+        worldItems.delete(data.itemId);
+        
+        // 广播给所有客户端，包括拾取者
         io.emit('itemPickedUp', {
             itemId: data.itemId,
             playerId: data.playerId,
             name: data.name
         });
-        worldItems.delete(data.itemId);
+        
+        // 强制刷新所有客户端的场景状态
+        io.emit('forceSceneRefresh', {
+            removedItemId: data.itemId
+        });
     });
 
     socket.on('itemDrop', function(data) {
@@ -115,6 +128,55 @@ io.sockets.on('connection', function(socket){
 
     // 当玩家连接时，发送现有物品信息
     socket.emit('initialItems', Array.from(worldItems.values()));
+
+    socket.on('requestInitialItems', function() {
+        console.log("Request for initial items received from", socket.id);
+        
+        // 如果是第一个连接的玩家，生成初始物品
+        if (!initialItemsGenerated) {
+            initialItemsGenerated = true;
+            
+            initialItems.forEach((itemName, index) => {
+                // 为物品生成固定位置 - 在玩家前方和两侧
+                let position;
+                if (index === 0) {
+                    // 第一个物品在玩家正前方2单位
+                    position = {
+                        x: socket.userData.x,
+                        y: 10, // 确保Y坐标稍高于地面
+                        z: socket.userData.z + 2
+                    };
+                } else {
+                    // 第二个物品在玩家右侧2单位
+                    position = {
+                        x: socket.userData.x + 2,
+                        y: 10, // 确保Y坐标稍高于地面
+                        z: socket.userData.z
+                    };
+                }
+                
+                // 生成唯一ID
+                const itemId = `${itemName}_${Date.now()}_${index}`;
+                
+                // 添加到世界物品列表
+                worldItems.set(itemId, {
+                    id: itemId,
+                    name: itemName,
+                    position: position
+                });
+                
+                console.log(`Generated initial item ${itemName} at position:`, position);
+            });
+        }
+        
+        // 广播现有物品给请求的玩家
+        const existingItems = Array.from(worldItems.values());
+        console.log("Sending items to player:", existingItems);
+        socket.emit('initialItems', existingItems);
+        
+        // 广播现有物品给所有玩家
+        io.emit('updateAllItems', existingItems);
+    });
 });
 
 http.listen(2002,'0.0.0.0', function(){
