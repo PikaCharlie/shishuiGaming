@@ -896,8 +896,9 @@ class Game{
 		// 保存当前场景状态
 		this.previousScene = this.scene;
 		this.previousCamera = this.camera.clone();
+		this.previousJoystickFunction = this.joystick.onMove;
 	
-		// 创建检视场景
+		// 创建新的检视场景
 		this.inspectScene = new THREE.Scene();
 		this.inspectScene.background = new THREE.Color(0x333333);
 	
@@ -906,7 +907,7 @@ class Game{
 		this.camera = new THREE.PerspectiveCamera(75, aspectRatio, 0.1, 1000);
 		this.camera.position.set(0, 0, 200);
 	
-		// 添加光源
+		// 添加环境光和方向光
 		const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
 		this.inspectScene.add(ambientLight);
 	
@@ -914,12 +915,37 @@ class Game{
 		directionalLight.position.set(10, 10, 10);
 		this.inspectScene.add(directionalLight);
 	
+		// 修改遥感控制为相机旋转
+		if (this.joystick) {
+			this.joystick.onMove = (forward, turn) => {
+				if (this.inspectObject) {
+					// 计算相机新位置
+					const radius = 200; // 相机到物体的距离
+					const speed = 2;
+					
+					// 水平旋转
+					this.cameraAngleHorizontal = (this.cameraAngleHorizontal || 0) + turn * speed;
+					// 垂直旋转(限制范围)
+					this.cameraAngleVertical = Math.max(-Math.PI/3, Math.min(Math.PI/3, 
+						(this.cameraAngleVertical || 0) - forward * speed));
+	
+					// 计算相机位置
+					this.camera.position.x = radius * Math.sin(this.cameraAngleHorizontal) * Math.cos(this.cameraAngleVertical);
+					this.camera.position.y = radius * Math.sin(this.cameraAngleVertical);
+					this.camera.position.z = radius * Math.cos(this.cameraAngleHorizontal) * Math.cos(this.cameraAngleVertical);
+	
+					// 相机始终看向物体中心
+					this.camera.lookAt(0, 0, 0);
+				}
+			};
+		}
+	
 		// 加载物品模型
 		const gltfLoader = new THREE.GLTFLoader();
 		gltfLoader.load(`${this.assetsPath}item/${itemName}.gltf`, (gltf) => {
 			const item = gltf.scene;
 			
-			// 自动调整大小
+			// 自动调整大小和位置
 			const box = new THREE.Box3().setFromObject(item);
 			const size = box.getSize(new THREE.Vector3());
 			const maxDim = Math.max(size.x, size.y, size.z);
@@ -930,83 +956,91 @@ class Game{
 			const center = box.getCenter(new THREE.Vector3());
 			item.position.sub(center);
 	
-			this.inspectScene.add(item);
 			this.inspectObject = item;
+			this.inspectScene.add(item);
 	
-			// 添加检视说明
-			const textDiv = document.createElement('div');
-			textDiv.style.position = 'fixed';
-			textDiv.style.top = '20px';
-			textDiv.style.left = '50%';
-			textDiv.style.transform = 'translateX(-50%)';
-			textDiv.style.color = 'white';
-			textDiv.style.fontSize = '20px';
-			textDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-			textDiv.style.padding = '10px';
-			textDiv.style.borderRadius = '5px';
-			textDiv.style.zIndex = '1000';
-			textDiv.innerHTML = `正在检视: ${itemName}<br>按ESC退出`;
-			document.body.appendChild(textDiv);
-			this.inspectText = textDiv;
+			// 添加检视说明UI
+			this.inspectUI = document.createElement('div');
+			this.inspectUI.style.position = 'fixed';
+			this.inspectUI.style.top = '20px';
+			this.inspectUI.style.left = '50%';
+			this.inspectUI.style.transform = 'translateX(-50%)';
+			this.inspectUI.style.color = 'white';
+			this.inspectUI.style.fontSize = '20px';
+			this.inspectUI.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+			this.inspectUI.style.padding = '10px';
+			this.inspectUI.style.borderRadius = '5px';
+			this.inspectUI.style.zIndex = '1000';
+			this.inspectUI.innerHTML = `检视中: ${itemName}<br>使用遥感旋转视角<br>按ESC退出`;
+			document.body.appendChild(this.inspectUI);
 	
-			// 开启检视模式
+			// 当前场景切换为检视场景
+			this.scene = this.inspectScene;
 			this.isInspecting = true;
-			
-			// 添加ESC退出检视
-			this.escapeHandler = (event) => {
-				if (event.key === 'Escape') {
-					this.exitInspectMode();
-				}
-			};
-			window.addEventListener('keydown', this.escapeHandler);
 		});
+	
+		// 添加ESC退出检视
+		this.escapeHandler = (event) => {
+			if (event.key === 'Escape') {
+				this.exitInspectMode();
+			}
+		};
+		window.addEventListener('keydown', this.escapeHandler);
 	}
 	
 	exitInspectMode() {
 		if (!this.isInspecting) return;
 	
 		// 移除事件监听
-		if (this.escapeHandler) {
-			window.removeEventListener('keydown', this.escapeHandler);
-		}
+		window.removeEventListener('keydown', this.escapeHandler);
 	
-		// 移除检视文本
-		if (this.inspectText && this.inspectText.parentNode) {
-			this.inspectText.parentNode.removeChild(this.inspectText);
-		}
-	
-		// 恢复场景
+		// 恢复原场景和相机
 		this.scene = this.previousScene;
 		this.camera = this.previousCamera;
+	
+		// 恢复遥感原功能
+		if (this.joystick) {
+			this.joystick.onMove = this.previousJoystickFunction;
+		}
+	
+		// 移除检视UI
+		if (this.inspectUI) {
+			document.body.removeChild(this.inspectUI);
+		}
 	
 		// 清理检视相关变量
 		this.inspectObject = null;
 		this.isInspecting = false;
 		this.inspectScene = null;
+		this.previousScene = null;
+		this.previousCamera = null;
+		this.previousJoystickFunction = null;
 	}
 
 	// 检查物品拾取
 	checkItemPickup() {
-    if (!this.player || this.player.isDead) return;
-    
-    const playerPos = this.player.object.position.clone();
-    this.interactableItems.forEach((item, itemId) => {
-        const distance = playerPos.distanceTo(item.position);
-        
-        if (distance < 100) {
-            // 先发送拾取事件给服务器
-            if (this.player.socket) {
-                this.player.socket.emit('itemPickup', {
-                    itemId: itemId,
-                    playerId: this.player.id,
-                    name: item.name
-                });
-            }
-            // 注意：不在这里直接处理本地物品移除，而是等待服务器确认
-        }
-    });
-}
+		if (!this.player || this.player.isDead) return;
+		
+		const playerPos = this.player.object.position.clone();
+		this.interactableItems.forEach((item, itemId) => {
+			const distance = playerPos.distanceTo(item.position);
+			
+			if (distance < 100) {
+				console.log('Attempting to pick up item:', itemId);
+				
+				// 只发送拾取事件到服务器，不在本地处理
+				if (this.player.socket) {
+					this.player.socket.emit('itemPickup', {
+						itemId: itemId,
+						playerId: this.player.id,
+						name: item.name
+					});
+				}
+			}
+		});
+	}
 
+	
 	// 丢弃物品
 	dropItem(index) {
 		const itemName = this.player.inventory[index];
@@ -1650,21 +1684,26 @@ class PlayerLocal extends Player {
         this.socket = io.connect();
 
         // 监听物品被拾取事件
-        this.socket.on('itemPickedUp', (data) => {
-            console.log('Item picked up:', data);
-            const item = game.interactableItems.get(data.itemId);
-            if (item) {
-                // 从场景中移除物品
-                game.scene.remove(item);
-                game.interactableItems.delete(data.itemId);
-                
-                // 只有拾取者才添加到背包
-                if (data.playerId === this.id) {
-                    this.addItem(data.name);
-                    game.updateInventoryUI();
-                }
-            }
-        });
+		this.socket.on('itemPickedUp', (data) => {
+			console.log('Item picked up event received:', data);
+			
+			// 从场景中移除物品
+			const item = game.interactableItems.get(data.itemId);
+			if (item) {
+				console.log('Removing item from scene:', data.itemId);
+				game.scene.remove(item);
+				game.interactableItems.delete(data.itemId);
+				
+				// 如果是当前玩家拾取的，添加到背包
+				if (data.playerId === this.id) {
+					console.log('Adding item to local inventory:', data.name);
+					this.addItem(data.name);
+					game.updateInventoryUI();
+				}
+			} else {
+				console.log('Item not found in scene:', data.itemId);
+			}
+		});
 
         // 监听物品丢弃事件
         this.socket.on('itemDropped', (data) => {
@@ -1673,6 +1712,32 @@ class PlayerLocal extends Player {
             if (!game.interactableItems.has(data.id)) {
                 game.loadSingleItem(data.name, data.position, data.id);
             }
+        });
+
+        // itemSpawned 监听器
+        this.socket.on('itemSpawned', function(data) {
+            const gltfLoader = new THREE.GLTFLoader();
+            gltfLoader.load(`${game.assetsPath}item/${data.name}.gltf`, (gltf) => {
+                const item = gltf.scene;
+                item.name = data.name;
+                item.userData.id = data.id;
+                item.position.copy(data.position);
+                item.scale.set(50, 50, 50);
+
+                // 添加发光材质
+                item.traverse(child => {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshPhongMaterial({
+                            map: child.material.map,
+                            emissive: new THREE.Color(0x000000),
+                            emissiveIntensity: 0
+                        });
+                    }
+                });
+
+                game.scene.add(item);
+                game.interactableItems.set(data.id, item);
+            });
         });
 
         // Use this.socket everywhere instead of socket
@@ -1746,100 +1811,6 @@ class PlayerLocal extends Player {
 			}
 		});
 
-		// 监听物品生成事件
-		this.socket.on('itemSpawned', function(data) {
-			const gltfLoader = new THREE.GLTFLoader();
-			gltfLoader.load(`${game.assetsPath}item/${data.name}.gltf`, (gltf) => {
-				const item = gltf.scene;
-				item.name = data.name;
-				item.userData.id = data.id;
-				item.position.copy(data.position);
-				item.scale.set(50, 50, 50);
-
-				// 添加发光材质
-				item.traverse(child => {
-					if (child.isMesh) {
-						child.material = new THREE.MeshPhongMaterial({
-							map: child.material.map,
-							emissive: new THREE.Color(0x000000),
-							emissiveIntensity : 0
-						});
-					}
-				});
-
-				game.scene.add(item);
-				game.interactableItems.set(data.id, item);
-			});
-		});
-
-		// 监听物品拾取事件
-		this.socket.on('itemPickup', function(data) {
-			const item = game.interactableItems.get(data.itemId);
-			if (item) {
-				game.scene.remove(item);
-				game.interactableItems.delete(data.itemId);
-			}
-		});
-
-		// 监听物品丢弃事件
-		this.socket.on('itemDrop', function(data) {
-			const gltfLoader = new THREE.GLTFLoader();
-			gltfLoader.load(`${game.assetsPath}item/${data.name}.gltf`, (gltf) => {
-				const item = gltf.scene;
-				item.name = data.name;
-				item.userData.id = `${data.name}_${Date.now()}_${Math.random()}`;
-				item.position.copy(data.position);
-				item.scale.set(50, 50, 50);
-
-				// 添加发光材质
-				item.traverse(child => {
-					if (child.isMesh) {
-						child.material = new THREE.MeshPhongMaterial({
-							map: child.material.map,
-							emissive: new THREE.Color(0x000000),
-							emissiveIntensity : 0
-						});
-					}
-				});
-
-				game.scene.add(item);
-				game.interactableItems.set(item.userData.id, item);
-			});
-		});
-
-		// 监听物品事件
-		this.socket.on('itemPickedUp', (data) => {
-			const item = game.interactableItems.get(data.itemId);
-			if (item) {
-				game.scene.remove(item);
-				game.interactableItems.delete(data.itemId);
-			}
-		});
-
-		this.socket.on('itemDropped', (data) => {
-			const gltfLoader = new THREE.GLTFLoader();
-			gltfLoader.load(`${game.assetsPath}item/${data.name}.gltf`, (gltf) => {
-				const item = gltf.scene;
-				item.name = data.name;
-				item.userData.id = data.id;
-				item.position.copy(data.position);
-				item.scale.set(50, 50, 50);
-
-				// 添加发光材质
-				item.traverse(child => {
-					if (child.isMesh) {
-						child.material = new THREE.MeshPhongMaterial({
-							map: child.material.map,
-							emissive: new THREE.Color(0x000000),
-							emissiveIntensity: 0
-						});
-					}
-				});
-
-				game.scene.add(item);
-				game.interactableItems.set(data.id, item);
-			});
-		});
 
 		this.socket.on('playerDied', (data) => {
 			if (data.inventory && data.inventory.length > 0) {
