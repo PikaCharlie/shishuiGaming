@@ -89,14 +89,18 @@ io.sockets.on('connection', function(socket){
         socket.broadcast.emit('itemSpawned', data);
     });
 
+    // 在 app.js 中
     socket.on('itemPickup', function(data) {
-        console.log('Item pickup:', data);
-        // 广播给所有玩家，包括拾取者
+        console.log('Server: Item pickup:', data);
+        
+        // 广播给所有客户端
         io.emit('itemPickedUp', {
             itemId: data.itemId,
             playerId: data.playerId,
             name: data.name
         });
+        
+        // 更新服务器物品状态
         worldItems.delete(data.itemId);
     });
 
